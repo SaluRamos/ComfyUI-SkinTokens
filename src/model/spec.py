@@ -9,6 +9,7 @@ from torch import Tensor
 import numpy as np
 import lightning.pytorch as pl
 import torch
+from .checkpoint import load_checkpoint
 
 from ..data.transform import Transform 
 from ..rig_package.info.asset import Asset
@@ -98,7 +99,7 @@ class ModelSpec(pl.LightningModule, ABC):
                     if os.path.exists(repo_models_path):
                         checkpoint_path = repo_models_path
                 
-        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        ckpt = load_checkpoint(checkpoint_path)
         state_dict = ckpt['state_dict']
         model_config = kwargs.get('model_config', None)
         transform_config = kwargs.get('transform_config', None)

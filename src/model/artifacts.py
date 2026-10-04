@@ -1,0 +1,2 @@
+MODEL_REPO_ID = "VAST-AI/SkinTokens"
+MODEL_REVISION = "79736cad0fd84de384d5eede659b4ebd24effe33"

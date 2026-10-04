@@ -99,3 +99,6 @@ coverage.xml
 *.cover
 
 # Project-specific ignores
+
+# Isolated Blender server dependencies
+.blender_deps/

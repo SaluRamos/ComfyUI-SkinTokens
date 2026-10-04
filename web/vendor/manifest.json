@@ -1,0 +1,30 @@
+{
+  "three.min.js.txt": {
+    "source": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+    "sha256": "9274bbcec8d96168626c732b5d31c775aa8cfb7eaa0599bec0c175908a2c1ce2"
+  },
+  "GLTFLoader.js.txt": {
+    "source": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js",
+    "sha256": "5c15967ba830918a9caea6338712c994c354bccd4edc4569bde411c3ec06a3e6"
+  },
+  "OBJLoader.js.txt": {
+    "source": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js",
+    "sha256": "e3c4cf3a6b061b6956e8e8d5cc360cf95da456dcced32961f859c8be6849a579"
+  },
+  "MTLLoader.js.txt": {
+    "source": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js",
+    "sha256": "cc11c50f0a3c2a9d92b0447378718819b6d6d8ab92a872062d9e6926e94c648f"
+  },
+  "fflate-0.8.0.js.txt": {
+    "source": "https://cdn.jsdelivr.net/npm/fflate@0.8.0/umd/index.js",
+    "sha256": "d0177b5ab8b6059fe1f3317c2bf448318d9beb336a04317ec7cc9bc8cb7d00ab"
+  },
+  "FBXLoader.js.txt": {
+    "source": "https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/FBXLoader.js",
+    "sha256": "399b1f64c0b0c00e9978697b2ffbe3fc72f698e938610f3ef35d89f9de79ca79"
+  },
+  "TGALoader.js.txt": {
+    "source": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/TGALoader.js",
+    "sha256": "919899fb923e9c2f09e0bada9a5d9d0de1f4fffdedd91ca3d981abfeeaab1d1c"
+  }
+}

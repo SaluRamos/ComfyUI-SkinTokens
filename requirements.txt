@@ -9,7 +9,7 @@ open3d
 gradio
 bottle
 tornado
-dill
+requests
 scipy
 numpy<2.0
-torch>=2.0
+torch>=2.6

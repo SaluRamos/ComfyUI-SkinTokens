@@ -7,28 +7,31 @@ import threading
 import traceback
 
 from .spec import bytes_to_object, object_to_bytes, BPY_PORT
+from .codec import MAX_PACKET_BYTES
+from .transport import authenticated, resolve_payload_path, server_token, payload_directory
 
 from ..rig_package.parser.bpy import BpyParser, transfer_rigging
 
 
 def _resolve_payload(data):
     if isinstance(data, dict) and "payload_path" in data:
-        payload_path = data["payload_path"]
-        try:
-            with open(payload_path, "rb") as f:
-                return bytes_to_object(f.read())
-        finally:
-            try:
-                os.remove(payload_path)
-            except OSError:
-                pass
+        payload_path = resolve_payload_path(data["payload_path"])
+        with open(payload_path, "rb") as f:
+            if os.fstat(f.fileno()).st_size > MAX_PACKET_BYTES:
+                raise ValueError("Payload exceeds 2 GiB")
+            return bytes_to_object(f.read(MAX_PACKET_BYTES + 1))
     return data
 
-def run():
-    path_queue = queue.Queue()
-    result_queue = queue.Queue()
-    
+def create_app(path_queue, result_queue):
     app = bottle.Bottle()
+
+    @app.hook('before_request')
+    def authorize():
+        if request.headers.get('Origin') or not authenticated(request.headers.get('Authorization')):
+            bottle.abort(403, "Unauthorized SkinTokens request")
+        response.set_header('X-SkinTokens-Protocol', '1')
+        if request.content_length > MAX_PACKET_BYTES:
+            bottle.abort(413, "Payload exceeds 2 GiB")
     
     @app.route('/load', method='GET') # type: ignore
     def load():
@@ -60,6 +63,16 @@ def run():
         payload = object_to_bytes(res)
         response.content_type = 'application/octet-stream'  # type: ignore
         return payload
+
+    return app
+
+
+def run():
+    server_token()
+    payload_directory()
+    path_queue = queue.Queue()
+    result_queue = queue.Queue()
+    app = create_app(path_queue, result_queue)
     
     def run_server(): bottle.run(app, host='127.0.0.1', port=BPY_PORT, server='tornado')
     threading.Thread(target=run_server, daemon=False).start()

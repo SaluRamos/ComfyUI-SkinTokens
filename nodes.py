@@ -10,6 +10,11 @@ from typing import List
 from torch import Tensor
 import signal
 import urllib.parse
+import importlib.util
+import shutil
+from contextlib import contextmanager
+
+import trimesh
 
 import folder_paths
 
@@ -19,6 +24,8 @@ if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
 # SkinTokens internal imports
+from src.server.transport import prepare_server_session, payload_directory, server_request
+from src.model.artifacts import MODEL_REPO_ID, MODEL_REVISION
 from src.data.dataset import DatasetConfig, RigDatasetModule
 from src.data.transform import Transform
 from src.model.tokenrig import TokenRigResult
@@ -38,9 +45,27 @@ from src.data.vertex_group import voxel_skin
 _bpy_server_proc = None
 _bpy_server_mode = None  # Tracks if currently running in 'embedded' or 'headless' mode
 
+
+def find_blender_executable():
+    configured = os.environ.get("SKINTOKENS_BLENDER_PATH")
+    if configured:
+        return configured
+    installed = shutil.which("blender")
+    if installed:
+        return installed
+    if os.name == "nt":
+        root = Path(os.environ.get("PROGRAMFILES", "C:/Program Files")) / "Blender Foundation"
+        candidates = sorted(root.glob("Blender */blender.exe"), reverse=True)
+        if candidates:
+            return str(candidates[0])
+    raise RuntimeError("Blender was not found. Install Blender or set SKINTOKENS_BLENDER_PATH to blender.exe.")
+
 def start_bpy_server_lazy(headless=False):
     """Starts the Blender python server if it isn't running already."""
     global _bpy_server_proc, _bpy_server_mode
+    if not headless and importlib.util.find_spec("bpy") is None:
+        print("[SkinTokens] bpy is unavailable in ComfyUI Python; using installed Blender.")
+        headless = True
     
     new_mode = "headless" if headless else "embedded"
     
@@ -54,12 +79,13 @@ def start_bpy_server_lazy(headless=False):
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
     bpy_server_path = os.path.join(current_dir, "bpy_server.py")
+    prepare_server_session()
 
     if headless:
         # HEADLESS MODE (System Blender)
         import shutil
-        blender_cmd = os.environ.get("SKINTOKENS_BLENDER_PATH") or shutil.which("blender") or "blender"
-        args = [blender_cmd, "--background", "--python", bpy_server_path]
+        blender_cmd = find_blender_executable()
+        args = [blender_cmd, "--background", "--factory-startup", "--python", bpy_server_path]
         env = os.environ.copy()
         print(f"[SkinTokens] Starting Headless Blender server...")
     else:
@@ -122,7 +148,7 @@ def wait_for_bpy_server(timeout=30):
                 "manually to see the real error: python_embeded\\python.exe ComfyUI\\custom_nodes\\ComfyUI-SkinTokens\\bpy_server.py"
             )
         try:
-            requests.get(f"{BPY_SERVER}/ping", timeout=1)
+            server_request("GET", f"{BPY_SERVER}/ping", timeout=1)
             print("[SkinTokens] bpy_server is ready")
             return
         except Exception:
@@ -133,11 +159,11 @@ def wait_for_bpy_server(timeout=30):
 def post_bpy_payload(endpoint: str, payload):
     payload_path = None
     try:
-        with tempfile.NamedTemporaryFile(prefix=f"skintokens_{endpoint}_", suffix=".pt", delete=False) as f:
+        with tempfile.NamedTemporaryFile(dir=payload_directory(), prefix=f"skintokens_{endpoint}_", suffix=".pt", delete=False) as f:
             f.write(object_to_bytes(payload))
             payload_path = f.name
-        request_payload = {"payload_path": payload_path}
-        response = requests.post(
+        request_payload = {"payload_path": os.path.basename(payload_path)}
+        response = server_request("POST",
             f"{BPY_SERVER}/{endpoint}",
             data=object_to_bytes(request_payload),
         )
@@ -450,7 +476,7 @@ if __name__ == '__main__':
     if use_embedded:
         cmd = [sys.executable, temp_script, "--", input_file, output_file, format_type, convention]
     else:
-        blender_cmd = shutil.which("blender") or "blender"
+        blender_cmd = find_blender_executable()
         cmd = [blender_cmd, "--background", "--factory-startup", "--python", temp_script, "--", input_file, output_file, format_type, convention]
         
     try:
@@ -490,17 +516,16 @@ class SkinTokensModelLoader:
         if not model_path or not os.path.exists(model_path):
             print(f"[SkinTokens] Model {model_name} not found locally. Attempting to download from HuggingFace...")
             from huggingface_hub import hf_hub_download
-            REPO_ID = "VAST-AI/SkinTokens"
             try:
                 # Download main model
-                hf_hub_download(repo_id=REPO_ID, filename=model_name, local_dir=skintoken_models_dir)
+                hf_hub_download(repo_id=MODEL_REPO_ID, revision=MODEL_REVISION, filename=model_name, local_dir=skintoken_models_dir)
                 
                 # If it's the default model, also ensure the VAE is downloaded
                 if "grpo_1400.ckpt" in model_name:
                     vae_path = "experiments/skin_vae_2_10_32768/last.ckpt"
                     if not os.path.exists(os.path.join(skintoken_models_dir, vae_path)):
                         print(f"[SkinTokens] Downloading required VAE: {vae_path}...")
-                        hf_hub_download(repo_id=REPO_ID, filename=vae_path, local_dir=skintoken_models_dir)
+                        hf_hub_download(repo_id=MODEL_REPO_ID, revision=MODEL_REVISION, filename=vae_path, local_dir=skintoken_models_dir)
                 
                 model_path = os.path.join(skintoken_models_dir, model_name)
                 print(f"[SkinTokens] Successfully downloaded to {model_path}")
@@ -549,6 +574,28 @@ class SkinTokensLoadMesh:
         return (mesh_path, )
 
 
+@contextmanager
+def prepare_input_mesh(input_mesh):
+    if isinstance(input_mesh, (str, os.PathLike)):
+        yield os.fspath(input_mesh)
+        return
+
+    with tempfile.TemporaryDirectory(prefix="skintokens_mesh_", dir=folder_paths.get_temp_directory()) as directory:
+        mesh_path = Path(directory) / "mesh.glb"
+        if isinstance(input_mesh, (trimesh.Trimesh, trimesh.Scene)):
+            mesh_path.write_bytes(input_mesh.export(file_type="glb"))
+        else:
+            from comfy_api.latest import Types
+            from comfy_extras.nodes_save_3d import mesh_item_to_glb_bytes
+            if not isinstance(input_mesh, Types.MESH):
+                raise TypeError("input_mesh must be a TRIMESH, native MESH or mesh file path.")
+            data = mesh_item_to_glb_bytes(input_mesh, 0)
+            if data is None:
+                raise ValueError("Input mesh is empty.")
+            mesh_path.write_bytes(data)
+        yield str(mesh_path)
+
+
 class SkinTokensGenerator:
     """Runs the 3D rig generation using the SkinTokens model and bpy server."""
     @classmethod
@@ -556,7 +603,7 @@ class SkinTokensGenerator:
         return {
             "required": {
                 "model": ("SKINTOKENS_MODEL",),
-                "input_mesh": ("STRING", {"forceInput": True, "tooltip": "Connect to a node that outputs a mesh file path"}),
+                "input_mesh": ("TRIMESH,MESH,STRING", {"forceInput": True, "tooltip": "Connect a TRIMESH, native MESH (first batch item), or mesh file path"}),
                 "top_k": ("INT", {"default": 5, "min": 1, "max": 200}),
                 "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.01}),
                 "temperature": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 2.0, "step": 0.1}),
@@ -578,6 +625,12 @@ class SkinTokensGenerator:
     
     def generate(self, model, input_mesh, top_k, top_p, temperature, repetition_penalty, num_beams, 
                  use_skeleton, use_transfer, use_postprocess, bone_names, output_format, bpy_server_mode):
+        with prepare_input_mesh(input_mesh) as mesh_path:
+            return self._generate_from_path(model, mesh_path, top_k, top_p, temperature, repetition_penalty, num_beams,
+                                            use_skeleton, use_transfer, use_postprocess, bone_names, output_format, bpy_server_mode)
+
+    def _generate_from_path(self, model, input_mesh, top_k, top_p, temperature, repetition_penalty, num_beams,
+                            use_skeleton, use_transfer, use_postprocess, bone_names, output_format, bpy_server_mode):
         
         if not input_mesh:
             raise ValueError("No input mesh path provided.")
@@ -715,7 +768,7 @@ class SkinTokensGenerator:
                     if suffix_type in ["fbx", "glb"]:
                         try:
                             print(f"[SkinTokens] Renaming joints to {convention} convention...")
-                            use_embedded = (bpy_server_mode == "Embedded (bpy)")
+                            use_embedded = (_bpy_server_mode == "embedded")
                             rename_joints_in_blender(str(out_path), str(out_path), suffix_type, convention, use_embedded=use_embedded)
                             print(f"[SkinTokens] Successfully renamed joints to {convention} convention.")
                         except Exception as ex:

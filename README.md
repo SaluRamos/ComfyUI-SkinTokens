@@ -41,6 +41,17 @@ A ComfyUI implementation for automated character rigging can be used for animati
 
 ### Requirements
 *   **Blender 4.2+**: Must be installed and **added to your system PATH** (so that running `blender` in a terminal works). This is required for the Headless Blender Server.
+*   **PyTorch 2.6+**: Required for restricted checkpoint loading.
+
+### Local security changes
+
+Mesh transport uses a data-only format and a per-session authenticated loopback server. Start it through the nodes or demo; manually launched clients and servers must share `SKINTOKENS_SERVER_TOKEN` (at least 32 characters) and `SKINTOKENS_PAYLOAD_DIR` (a dedicated temporary directory). Temporary payload messages contain session filenames, not arbitrary paths, and the client owns their deletion. Packets are limited to 2 GiB.
+
+The preview libraries are bundled locally at their original versions. Default model downloads use the pinned Hugging Face revision in `src/model/artifacts.py`. Legacy NumPy object arrays and OmegaConf checkpoint configurations use fixed restricted type lists; arbitrary Python objects are refused.
+
+The installer keeps an existing Flash Attention installation. If absent, generation uses PyTorch SDPA, which may have different speed, memory use and floating-point rounding. To install a wheel explicitly, obtain its SHA-256 from a trusted source and run `python install.py --flash-attn-wheel <path-or-https-url> --flash-attn-sha256 <sha256>`. A mismatch prevents wheel installation; dependencies are not changed by the wheel installation.
+
+Run the security regression tests with `python -m unittest discover -s test_scripts -p test_security.py -v` in an environment with PyTorch, NumPy, SciPy, trimesh, OmegaConf, requests and Bottle.
 
 ### Generation Parameters
 

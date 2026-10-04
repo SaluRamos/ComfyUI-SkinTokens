@@ -3,17 +3,20 @@ import sys
 import subprocess
 import shutil
 import requests
-import re
+import argparse
+import hashlib
+import hmac
+import tempfile
 from pathlib import Path
 
 # Dependencies required for the current environment (ComfyUI/Venv)
 CORE_DEPS = [
-    "dill", "python-box", "einops", "omegaconf", "lightning", "addict",
+    "requests", "python-box", "einops", "omegaconf", "lightning", "addict",
     "fast-simplification", "trimesh", "open3d", "gradio", "bottle", "tornado"
 ]
 
 # Dependencies required specifically for the Blender standalone server
-BLENDER_DEPS = ["bottle", "dill", "scipy", "trimesh", "tornado"]
+BLENDER_DEPS = ["bottle", "requests", "scipy", "trimesh", "tornado"]
 
 def find_blender_python(blender_path):
     """Finds the internal python executable relative to the blender executable."""
@@ -106,68 +109,59 @@ def install_blender_section():
     except Exception as e:
         print(f"ERROR: Failed to install Blender dependencies: {e}")
 
-def install_flash_attn_section():
-    print("\n--- Phase 2: Flash Attention Setup (Pre-built) ---")
-    try:
-        import torch
-        py_ver = f"cp{sys.version_info.major}{sys.version_info.minor}"
-        cuda_ver = f"cu{torch.version.cuda.replace('.', '')}" if torch.cuda.is_available() else "nocuda"
-        torch_raw = torch.__version__.split('+')[0].split('.')
-        torch_short = f"torch{torch_raw[0]}{torch_raw[1]}"
-        torch_dotted = f"torch{torch_raw[0]}.{torch_raw[1]}"
-        torch_full = torch.__version__.split('+')[0]
-    except ImportError:
-        print("Error: Torch must be installed first to detect the correct Flash Attention wheel.")
+def install_flash_attn_section(wheel=None, expected_sha256=None):
+    print("\n--- Phase 2: Optional Flash Attention Setup ---")
+    if wheel is None and expected_sha256 is None:
+        print("Keeping existing Flash Attention. SDPA is used when it is unavailable.")
+        print("To install a verified wheel, supply --flash-attn-wheel and --flash-attn-sha256.")
         return
+    if not wheel or not expected_sha256:
+        raise ValueError("Both the wheel and its independently verified SHA-256 are required")
+    expected_sha256 = expected_sha256.lower()
+    if len(expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in expected_sha256):
+        raise ValueError("Invalid SHA-256")
+    with tempfile.TemporaryDirectory(prefix="skintokens_wheel_") as directory:
+        from urllib.parse import urlparse, unquote
+        parsed = urlparse(wheel)
+        if parsed.scheme and parsed.scheme not in ("https",):
+            # A Windows drive letter is a local path, not a URL scheme.
+            if not Path(wheel).is_file():
+                raise ValueError("Wheel URLs must use HTTPS")
+        filename = unquote(parsed.path.rsplit("/", 1)[-1]) if parsed.scheme == "https" else Path(wheel).name
+        if not filename.startswith("flash_attn-") or not filename.endswith(".whl") or Path(filename).name != filename:
+            raise ValueError("Expected a Flash Attention wheel filename")
+        target = Path(directory) / filename
+        if parsed.scheme == "https":
+            with requests.get(wheel, stream=True, timeout=60) as response:
+                response.raise_for_status()
+                if urlparse(response.url).scheme != "https":
+                    raise ValueError("Wheel download redirected away from HTTPS")
+                with target.open("wb") as output:
+                    for chunk in response.iter_content(1024 * 1024):
+                        output.write(chunk)
+        else:
+            shutil.copyfile(wheel, target)
+        digest = hashlib.sha256()
+        with target.open("rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if not hmac.compare_digest(digest.hexdigest(), expected_sha256):
+            raise ValueError("Flash Attention wheel SHA-256 mismatch; installation refused")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--no-deps", str(target)], check=True)
+        print("SUCCESS: Verified Flash Attention wheel installed.")
 
-    print(f"Detected: {py_ver}, {cuda_ver}, {torch_full}")
-
-    repos = [
-        "https://github.com/PozzettiAndrea/cuda-wheels/releases/download/flash_attn-latest/",
-        "https://github.com/kingbri1/flash-attention/releases/download/v2.8.3/",
-        "https://pozzettiandrea.github.io/cuda-wheels/flash-attn/"
-    ]
-    
-    patterns = [
-        f"flash_attn-2.8.3%2B{cuda_ver}{torch_dotted}-{py_ver}-{py_ver}",
-        f"flash_attn-2.8.3+{cuda_ver}{torch_dotted}-{py_ver}-{py_ver}",
-        f"flash_attn-2.8.3+{cuda_ver}torch{torch_full}cxx11abiFALSE-{py_ver}-{py_ver}",
-        f"flash_attn-2.8.3+{cuda_ver}{torch_short}-{py_ver}-{py_ver}"
-    ]
-
-    possible_urls = []
-    for base_url in repos:
-        for p in patterns:
-            tag = "win_amd64.whl" if os.name == 'nt' else "manylinux_2_34_x86_64.manylinux_2_35_x86_64.whl"
-            possible_urls.append(f"{base_url}{p}-{tag}")
-            if os.name != 'nt':
-                possible_urls.append(f"{base_url}{p}-linux_x86_64.whl")
-
-    full_url = None
-    for url in possible_urls:
-        try:
-            r = requests.get(url, timeout=5, allow_redirects=True, stream=True)
-            if r.status_code == 200:
-                full_url = url
-                break
-        except: continue
-
-    if full_url:
-        print(f"Target Wheel: {full_url}")
-        print("Proceeding with automatic installation...")
-        try:
-            subprocess.run([sys.executable, "-m", "pip", "install", full_url], check=True)
-            print("SUCCESS: Flash Attention installed.")
-        except Exception as e:
-            print(f"ERROR: Flash Attention installation failed: {e}")
-    else:
-        print("NOTICE: No matching pre-built wheel found for your configuration.")
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--flash-attn-wheel", help="Local wheel or HTTPS URL")
+    parser.add_argument("--flash-attn-sha256", help="Independently verified wheel SHA-256")
+    args = parser.parse_args()
+    if bool(args.flash_attn_wheel) != bool(args.flash_attn_sha256):
+        parser.error("Supply both --flash-attn-wheel and --flash-attn-sha256")
     print("=== SkinTokens: Complete Installation Script ===")
     install_core_section()
     install_blender_section()
-    install_flash_attn_section()
+    install_flash_attn_section(args.flash_attn_wheel, args.flash_attn_sha256)
     print("\nInstallation process finished.")
 
 if __name__ == "__main__":

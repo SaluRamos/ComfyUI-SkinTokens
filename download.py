@@ -1,8 +1,9 @@
 from huggingface_hub import hf_hub_download, snapshot_download
 
 import argparse
+from src.model.artifacts import MODEL_REPO_ID, MODEL_REVISION
 
-REPO_ID = "VAST-AI/SkinTokens"
+REPO_ID = MODEL_REPO_ID
 
 MODELS = [
     "experiments/skin_vae_2_10_32768/last.ckpt",
@@ -21,6 +22,7 @@ LLM_LOCAL_DIR = "models/Qwen3-0.6B"
 def download_model(name: str):
     local_path = hf_hub_download(
         repo_id=REPO_ID,
+        revision=MODEL_REVISION,
         filename=name,
         local_dir=".",
     )
@@ -40,12 +42,14 @@ def download_data(name: str):
     local_path = hf_hub_download(
         repo_id=REPO_ID,
         filename=f"dataset_clean/{name}",
+        revision=MODEL_REVISION,
         local_dir=".",
     )
     name = name.removesuffix(".zip")
     local_path = snapshot_download(
         repo_id=REPO_ID,
         allow_patterns=[f"datalist/{name}/*"],
+        revision=MODEL_REVISION,
         local_dir=".",
     )
     print(f"[DATA] {name} downloaded to: {local_path}")

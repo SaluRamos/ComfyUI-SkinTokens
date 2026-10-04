@@ -30,6 +30,7 @@ from src.server.spec import (
     bytes_to_object,
 )
 from src.data.vertex_group import voxel_skin
+from src.server.transport import prepare_server_session, payload_directory, server_request
 
 def get_default_ckpt():
     import os
@@ -343,6 +344,7 @@ if __name__ == '__main__':
 
 
 def start_bpy_server(use_blender: bool = False):
+    prepare_server_session()
     if use_blender:
         args = ["blender", "--background", "--python", "bpy_server.py"]
     else:
@@ -430,11 +432,11 @@ def map_output_path(
 def post_bpy_payload(endpoint: str, payload):
     payload_path = None
     try:
-        with tempfile.NamedTemporaryFile(prefix=f"skintokens_{endpoint}_", suffix=".pt", delete=False) as f:
+        with tempfile.NamedTemporaryFile(dir=payload_directory(), prefix=f"skintokens_{endpoint}_", suffix=".pt", delete=False) as f:
             f.write(object_to_bytes(payload))
             payload_path = f.name
-        request_payload = {"payload_path": payload_path}
-        response = requests.post(
+        request_payload = {"payload_path": os.path.basename(payload_path)}
+        response = server_request("POST",
             f"{BPY_SERVER}/{endpoint}",
             data=object_to_bytes(request_payload),
         )
@@ -745,7 +747,7 @@ def wait_for_bpy_server(timeout=30):
     t0 = time.time()
     while True:
         try:
-            requests.get(f"{BPY_SERVER}/ping", timeout=1)
+            server_request("GET", f"{BPY_SERVER}/ping", timeout=1)
             print("[Main] bpy_server is ready")
             return
         except Exception:

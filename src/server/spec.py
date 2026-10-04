@@ -10,6 +10,7 @@ import io
 import os
 import sys
 from ..rig_package.info.asset import Asset
+from .codec import encode_packet, decode_packet
 try:
     from ..model.tokenrig import TokenRig
 except ImportError:
@@ -64,12 +65,10 @@ class TensorPacket:
 
 
 def object_to_bytes(t):
-    import dill
-    return dill.dumps(t)
+    return encode_packet(t, {"Asset": Asset, "TensorPacket": TensorPacket})
 
 def bytes_to_object(b, map_location=None):
-    import dill
-    return dill.loads(b)
+    return decode_packet(b, {"Asset": Asset, "TensorPacket": TensorPacket}, map_location)
 
 def get_model(
     ckpt_path: str,
@@ -79,10 +78,12 @@ def get_model(
     model = TokenRig.load_from_system_checkpoint(checkpoint_path=ckpt_path)
     if hf_path is not None:
         from transformers import AutoModel
+        from transformers.utils import is_flash_attn_2_available
         a = AutoModel.from_pretrained(
             hf_path,
             local_files_only=True,
-            _attn_implementation="flash_attention_2",
+            trust_remote_code=False,
+            _attn_implementation="flash_attention_2" if is_flash_attn_2_available() else "sdpa",
             torch_dtype=torch.bfloat16 if 'torch' in sys.modules else None,
         )
         model.transformer.model.load_state_dict(a.state_dict())

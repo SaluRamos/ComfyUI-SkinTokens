@@ -11,7 +11,9 @@ import os
 
 from ..rig_package.info.asset import Asset
 from ..server.spec import BPY_SERVER, bytes_to_object, object_to_bytes
+from ..server.transport import server_request
 from .spec import ConfigSpec
+from .safe_npz import load_npz
 
 @dataclass
 class LazyAsset(ABC):
@@ -39,7 +41,7 @@ class BpyServerLazyAsset(LazyAsset):
     """workaround while bpy is working in multiple threads"""
     def load(self) -> 'Asset':
         try:
-            asset = bytes_to_object(requests.get(f"{BPY_SERVER}/load", data=object_to_bytes(self.path)).content)
+            asset = bytes_to_object(server_request("GET", f"{BPY_SERVER}/load", data=object_to_bytes(self.path)).content)
             if isinstance(asset, str):
                 raise RuntimeError(f"bpy server failed: {asset}")
             assert isinstance(asset, Asset)
@@ -53,7 +55,7 @@ class BpyServerLazyAsset(LazyAsset):
 class NpzLazyAsset(LazyAsset):
     
     def load(self) -> 'Asset':
-        d = np.load(self.path, allow_pickle=True)
+        d = load_npz(self.path)
         asset = Asset(
             vertices=d['vertices'],
             faces=d['faces'],
@@ -82,7 +84,7 @@ class UniRigLazyAsset(LazyAsset):
                 return x.item()
             return x
         
-        d = np.load(self.path, allow_pickle=True)
+        d = load_npz(self.path)
         parents = bn(d.get('parents', None))
         if parents is not None:
             parents = [-1 if x is None else x for x in parents]

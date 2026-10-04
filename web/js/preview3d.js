@@ -5,39 +5,39 @@ const LOG = (...args) => console.log("[SkinTokens]", ...args);
 const WARN = (...args) => console.warn("[SkinTokens]", ...args);
 const ERR = (...args) => console.error("[SkinTokens]", ...args);
 
-// Load Three.js and dependencies dynamically from CDN
+// Load Three.js and dependencies from bundled files
 async function loadThreeJS() {
     try {
         if (!window.THREE) {
-            LOG("Loading Three.js r128 from CDN...");
-            await loadScript("https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js");
+            LOG("Loading Three.js r128 from bundled files...");
+            await loadScript(new URL("../vendor/three.min.js.txt", import.meta.url).href);
             LOG("Three.js core loaded.");
         } else {
             LOG("Three.js already loaded. Verifying loaders...");
         }
 
         if (!THREE.GLTFLoader) {
-            await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js");
+            await loadScript(new URL("../vendor/GLTFLoader.js.txt", import.meta.url).href);
             LOG("  ✓ GLTFLoader loaded");
         }
 
         if (!THREE.OBJLoader) {
-            await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js");
+            await loadScript(new URL("../vendor/OBJLoader.js.txt", import.meta.url).href);
             LOG("  ✓ OBJLoader loaded");
         }
 
         if (!THREE.MTLLoader) {
-            await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js");
+            await loadScript(new URL("../vendor/MTLLoader.js.txt", import.meta.url).href);
             LOG("  ✓ MTLLoader loaded");
         }
 
         if (!window.fflate) {
-            await loadScript("https://cdn.jsdelivr.net/npm/fflate@0.8.0/umd/index.js");
+            await loadScript(new URL("../vendor/fflate-0.8.0.js.txt", import.meta.url).href);
             LOG("  ✓ fflate loaded");
         }
 
         if (!THREE.FBXLoader) {
-            await loadScript("https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/FBXLoader.js");
+            await loadScript(new URL("../vendor/FBXLoader.js.txt", import.meta.url).href);
             LOG("  ✓ FBXLoader (r147) loaded");
 
             // HACK: Force FBXLoader to recognize Blender's sanitized names (like Image_0_png) 
@@ -53,7 +53,7 @@ async function loadThreeJS() {
         }
 
         if (!THREE.TGALoader) {
-            await loadScript("https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/TGALoader.js");
+            await loadScript(new URL("../vendor/TGALoader.js.txt", import.meta.url).href);
             if (!THREE.TGALoader && window.TGALoader) {
                 THREE.TGALoader = window.TGALoader;
             }
@@ -68,15 +68,22 @@ async function loadThreeJS() {
 }
 
 function loadScript(src) {
-    return new Promise((resolve, reject) => {
+    return fetch(src).then(async response => {
+        if (!response.ok) throw new Error(`Library request failed: ${response.status}`);
+        // .js.txt keeps these classic scripts out of ComfyUI's extension discovery.
+        const code = await response.text();
+        const scriptUrl = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
+        return new Promise((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = src;
-        script.onload = resolve;
+        script.src = scriptUrl;
+        script.onload = () => { URL.revokeObjectURL(scriptUrl); resolve(); };
         script.onerror = (e) => {
+            URL.revokeObjectURL(scriptUrl);
             ERR("Failed to load script:", src, e);
             reject(e);
         };
         document.head.appendChild(script);
+        });
     });
 }
 

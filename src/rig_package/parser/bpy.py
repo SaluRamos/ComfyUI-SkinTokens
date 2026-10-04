@@ -656,7 +656,7 @@ def make_asset(
                 vertex_group_reweight = vertex_group_reweight / vertex_group_reweight[..., :group_per_vertex].sum(axis=1)[...,None]
             # clean vertex groups first in case skin exists
             for name in joint_names:
-                ob.vertex_groups[name].remove(range(990))
+                ob.vertex_groups[name].remove(list(range(len(ob.data.vertices))))
             for v, w in enumerate(skin):
                 for ii in range(group_per_vertex):
                     j = argsorted[v, ii]
