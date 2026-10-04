@@ -74,3 +74,10 @@ If you find my work useful, please consider starring the repository and supporti
 
 ### 🤝 Acknowledgements
 This project is based on the [SkinTokens](https://github.com/VAST-AI-Research/SkinTokens) research by VAST-AI-Research. We would like to thank the authors for their groundbreaking work in automated 3D rigging and skinning.
+
+
+### Rigged mesh connections
+
+`SkinTokens Rig Generator` now outputs `mesh` (`FILE_3D`), a native ComfyUI 3D file carrying the exported bones, skin and materials. Connect it to `SkinTokens Rig Previewer → mesh` or `UniMate → mesh`. The previewer also outputs the same `mesh`, so the workflow can be `Generator → Previewer → UniMate`.
+
+Select `.glb` or `.fbx` in the generator to preserve the rig; `.obj` cannot store bones or skin. The existing `output_mesh_path` and previewer's `mesh_path` connections remain supported at their original socket indices. When both inputs are connected, `mesh` takes priority. Restart ComfyUI, reload the page and recreate these nodes to expose the added sockets. The previewer displays the file supplied to it; interactive bone edits remain local to its viewer.

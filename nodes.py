@@ -17,6 +17,7 @@ from contextlib import contextmanager
 import trimesh
 
 import folder_paths
+from comfy_api.latest import Types
 
 # Add the current directory to sys.path to allow importing from src
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -500,12 +501,13 @@ class SkinTokensModelLoader:
             
         return {
             "required": {
-                "model_name": (files, {"tooltip": "Select a checkpoint from models/skintoken/. Will auto-download if missing."}),
+                "model_name": (files, {"tooltip": "Checkpoint em ComfyUI/models/skintoken. Se estiver ausente, o loader tenta baixar os pesos e, para o modelo padrão, o VAE necessário."}),
             }
         }
     
     RETURN_TYPES = ("SKINTOKENS_MODEL",)
     RETURN_NAMES = ("model",)
+    OUTPUT_TOOLTIPS = ("Modelo SkinTokens carregado, pronto para conectar ao Rig Generator.",)
     FUNCTION = "load_model"
     CATEGORY = "SkinTokens"
     
@@ -553,12 +555,13 @@ class SkinTokensLoadMesh:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "mesh_path": ("STRING", {"default": "", "multiline": False, "tooltip": "Absolute or relative path to the 3D model"}),
+                "mesh_path": ("STRING", {"default": "", "multiline": False, "tooltip": "Caminho do arquivo 3D de entrada. Aceita caminho absoluto ou relativo à pasta ComfyUI/input. Este node fornece o caminho ao Rig Generator."}),
             }
         }
 
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("mesh_path",)
+    OUTPUT_TOOLTIPS = ("Caminho validado do arquivo 3D, para conectar ao input_mesh do Rig Generator.",)
     FUNCTION = "load"
     CATEGORY = "SkinTokens"
 
@@ -585,7 +588,6 @@ def prepare_input_mesh(input_mesh):
         if isinstance(input_mesh, (trimesh.Trimesh, trimesh.Scene)):
             mesh_path.write_bytes(input_mesh.export(file_type="glb"))
         else:
-            from comfy_api.latest import Types
             from comfy_extras.nodes_save_3d import mesh_item_to_glb_bytes
             if not isinstance(input_mesh, Types.MESH):
                 raise TypeError("input_mesh must be a TRIMESH, native MESH or mesh file path.")
@@ -602,32 +604,38 @@ class SkinTokensGenerator:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "model": ("SKINTOKENS_MODEL",),
-                "input_mesh": ("TRIMESH,MESH,STRING", {"forceInput": True, "tooltip": "Connect a TRIMESH, native MESH (first batch item), or mesh file path"}),
-                "top_k": ("INT", {"default": 5, "min": 1, "max": 200}),
-                "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.01}),
-                "temperature": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 2.0, "step": 0.1}),
-                "repetition_penalty": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 3.0, "step": 0.1}),
-                "num_beams": ("INT", {"default": 10, "min": 1, "max": 20}),
-                "use_skeleton": ("BOOLEAN", {"default": False, "label_on": "Yes", "label_off": "No"}),
-                "use_transfer": ("BOOLEAN", {"default": True, "label_on": "Yes", "label_off": "No", "tooltip": "IMPORTANT: Set to 'Yes' to preserve textures, materials, and original mesh quality from your input file."}),
-                "use_postprocess": ("BOOLEAN", {"default": False, "label_on": "Yes", "label_off": "No"}),
-                "bone_names": (["articulated", "mixamo", "ue5"], {"default": "articulated"}),
-                "output_format": ([".glb", ".fbx", ".obj"], {"default": ".glb"}),
-                "bpy_server_mode": (["Embedded (bpy)", "Headless (Blender)"], {"default": "Embedded (bpy)"}),
+                "model": ("SKINTOKENS_MODEL", {"tooltip": "Conecte a saída model do Load SkinTokens Model. Contém o modelo, tokenizer e configuração usados para gerar o rig e os pesos de skin."}),
+                "input_mesh": ("TRIMESH,MESH,STRING", {"forceInput": True, "tooltip": "Mesh que receberá o rig. Aceita TRIMESH, MESH nativa do ComfyUI (primeiro item do lote) ou caminho STRING de um arquivo 3D."}),
+                "top_k": ("INT", {"default": 5, "min": 1, "max": 200, "tooltip": "Limita a amostragem aos K tokens mais prováveis em cada etapa. Valores menores restringem as escolhas; maiores permitem mais variedade."}),
+                "top_p": ("FLOAT", {"default": 0.95, "min": 0.1, "max": 1.0, "step": 0.01, "tooltip": "Limita as escolhas ao conjunto de tokens cuja probabilidade acumulada atinge este valor. Valores menores restringem a amostragem; próximo de 1 permite mais variedade. Atua junto com top_k."}),
+                "temperature": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 2.0, "step": 0.1, "tooltip": "Controla a aleatoriedade da geração. Abaixo de 1 favorece tokens mais prováveis; acima de 1 aumenta a variedade. 1 mantém a distribuição original."}),
+                "repetition_penalty": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 3.0, "step": 0.1, "tooltip": "Penalidade aplicada aos tokens já usados. Acima de 1 desencoraja repetição; 1 não aplica penalidade; abaixo de 1 favorece repetição. Penalidades altas podem alterar a qualidade do rig."}),
+                "num_beams": ("INT", {"default": 10, "min": 1, "max": 20, "tooltip": "Quantidade de sequências candidatas exploradas durante a geração. Valores maiores aumentam o uso de memória e o tempo; reduza se faltar VRAM."}),
+                "use_skeleton": ("BOOLEAN", {"default": False, "label_on": "Yes", "label_off": "No", "tooltip": "Se a entrada já contém um esqueleto, mantém seus tokens para orientar a geração dos pesos de skin. Desative para gerar um novo esqueleto. Não cria um esqueleto de referência quando a entrada não possui bones."}),
+                "use_transfer": ("BOOLEAN", {"default": True, "label_on": "Yes", "label_off": "No", "tooltip": "Transfere o rig e os pesos gerados para a mesh original, preservando sua geometria e materiais. Ative para manter a qualidade visual do arquivo de entrada."}),
+                "use_postprocess": ("BOOLEAN", {"default": False, "label_on": "Yes", "label_off": "No", "tooltip": "Aplica um filtro por voxelização aos pesos de skin gerados e normaliza os pesos novamente. Acrescenta uma etapa de processamento; não gera um novo esqueleto."}),
+                "bone_names": (["articulated", "mixamo", "ue5"], {"default": "articulated", "tooltip": "Convenção dos nomes dos bones exportados. articulated mantém os nomes gerados; mixamo e ue5 renomeiam bones em GLB/FBX. Renomear não adapta a topologia do esqueleto."}),
+                "output_format": ([".glb", ".fbx", ".obj"], {"default": ".glb", "tooltip": "Formato do arquivo exportado. GLB e FBX preservam bones e skin; OBJ guarda apenas a geometria. Use GLB para conectar o rig ao UniMate e visualizar no ComfyUI."}),
+                "bpy_server_mode": (["Embedded (bpy)", "Headless (Blender)"], {"default": "Embedded (bpy)", "tooltip": "Embedded usa o módulo bpy do Python do ComfyUI. Headless inicia o Blender instalado em segundo plano. Se bpy não estiver disponível, Embedded usa o Blender instalado automaticamente."}),
             }
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("output_mesh_path",)
+    RETURN_TYPES = ("STRING", "FILE_3D")
+    RETURN_NAMES = ("output_mesh_path", "mesh")
+    OUTPUT_TOOLTIPS = (
+        "Caminho absoluto do modelo exportado, para conexões STRING existentes.",
+        "Arquivo 3D nativo com rig, skin e materiais. Conecte à entrada mesh do Rig Previewer ou UniMate. Use GLB/FBX para preservar o rig.",
+    )
     FUNCTION = "generate"
     CATEGORY = "SkinTokens"
     
     def generate(self, model, input_mesh, top_k, top_p, temperature, repetition_penalty, num_beams, 
                  use_skeleton, use_transfer, use_postprocess, bone_names, output_format, bpy_server_mode):
         with prepare_input_mesh(input_mesh) as mesh_path:
-            return self._generate_from_path(model, mesh_path, top_k, top_p, temperature, repetition_penalty, num_beams,
-                                            use_skeleton, use_transfer, use_postprocess, bone_names, output_format, bpy_server_mode)
+            result = self._generate_from_path(model, mesh_path, top_k, top_p, temperature, repetition_penalty, num_beams,
+                                              use_skeleton, use_transfer, use_postprocess, bone_names, output_format, bpy_server_mode)
+        output_path = result[0]
+        return (output_path, Types.File3D(output_path))
 
     def _generate_from_path(self, model, input_mesh, top_k, top_p, temperature, repetition_penalty, num_beams,
                             use_skeleton, use_transfer, use_postprocess, bone_names, output_format, bpy_server_mode):
@@ -778,57 +786,60 @@ class SkinTokensGenerator:
 
 
 class SkinTokensRigPreviewer:
-    """Passes the mesh path to the frontend Web Extension for 3D visualization and rig manipulation."""
+    """Shows a rigged 3D file and passes the same file to downstream nodes."""
     @classmethod
     def INPUT_TYPES(s):
-        return {
-            "required": {
-                "mesh_path": ("STRING", {"forceInput": True}),
-            }
-        }
+        return {"required": {}, "optional": {
+            "mesh_path": ("STRING", {"forceInput": True, "tooltip": "Entrada de caminho STRING para workflows existentes. Aceita arquivo absoluto ou caminho relativo à pasta input. Prefira mesh para conectar diretamente o arquivo 3D com rig."}),
+            "mesh": ("FILE_3D,FILE_3D_GLB,FILE_3D_FBX,FILE_3D_OBJ", {"forceInput": True, "tooltip": "Conecte a saída mesh do SkinTokens Rig Generator. Recebe o arquivo 3D com bones, skin e materiais, exibe o modelo e repassa o mesmo arquivo. Tem prioridade sobre mesh_path."}),
+        }}
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("mesh_path",)
+    RETURN_TYPES = ("STRING", "FILE_3D")
+    RETURN_NAMES = ("mesh_path", "mesh")
+    OUTPUT_TOOLTIPS = ("Caminho do modelo exibido no preview.", "O mesmo arquivo 3D recebido, incluindo seu rig. Alterações interativas dos bones ficam somente no visualizador.")
     OUTPUT_NODE = True
     FUNCTION = "preview"
     CATEGORY = "SkinTokens"
 
-    def preview(self, mesh_path):
-        import urllib.parse
-        import os
-        import folder_paths
-        
-        # We need to construct a url for the frontend to fetch the file
-        # NOTE: Do NOT prefix with /api here - the JS-side api.apiURL() adds it automatically
-        output_dir = folder_paths.get_output_directory()
-        print(f"[SkinTokens Previewer] mesh_path={mesh_path}, output_dir={output_dir}")
-        try:
-            rel_path = os.path.relpath(mesh_path, output_dir)
-            if not rel_path.startswith(".."):
-                # File is inside output directory
-                file_name = os.path.basename(rel_path)
-                subfolder = os.path.dirname(rel_path)
-                if subfolder == ".":
-                    subfolder = ""
-                subfolder = subfolder.replace("\\", "/")
-                url = f"/view?filename={urllib.parse.quote(file_name)}&type=output&subfolder={urllib.parse.quote(subfolder)}"
+    def preview(self, mesh_path="", mesh=None):
+        if mesh is not None:
+            if not isinstance(mesh, Types.File3D):
+                raise TypeError("mesh must be a native FILE_3D with its rig, not a vertices/faces MESH.")
+            if mesh.is_disk_backed:
+                mesh_path = mesh.get_source()
             else:
-                # File is not in output directory, try input
-                input_dir = folder_paths.get_input_directory()
-                rel_path_in = os.path.relpath(mesh_path, input_dir)
-                if not rel_path_in.startswith(".."):
-                    file_name = os.path.basename(rel_path_in)
-                    subfolder = os.path.dirname(rel_path_in).replace("\\", "/")
-                    if subfolder == ".":
-                        subfolder = ""
-                    url = f"/view?filename={urllib.parse.quote(file_name)}&type=input&subfolder={urllib.parse.quote(subfolder)}"
-                else:
-                    url = f"/view?filename={urllib.parse.quote(os.path.basename(mesh_path))}&type=output"
-        except:
-            url = f"/view?filename={urllib.parse.quote(os.path.basename(mesh_path))}&type=output"
-        
-        print(f"[SkinTokens Previewer] Generated URL: {url}")
-        return {"ui": {"skintokens_mesh": [url]}, "result": (mesh_path,)}
+                if mesh.format not in ("glb", "fbx", "obj"):
+                    raise ValueError("The previewer supports GLB, FBX and OBJ files.")
+                directory = tempfile.mkdtemp(prefix="skintokens_preview_", dir=folder_paths.get_temp_directory())
+                mesh_path = mesh.save_to(str(Path(directory) / ("mesh." + mesh.format)))
+        elif mesh_path:
+            mesh_path = os.fspath(mesh_path)
+            if not Path(mesh_path).is_absolute():
+                mesh_path = folder_paths.get_annotated_filepath(mesh_path)
+            mesh = Types.File3D(mesh_path)
+        else:
+            raise ValueError("Connect mesh or mesh_path to the SkinTokens Rig Previewer.")
+
+        path = Path(mesh_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Preview mesh not found: {path}")
+        for kind, directory in (("output", folder_paths.get_output_directory()),
+                                ("input", folder_paths.get_input_directory()),
+                                ("temp", folder_paths.get_temp_directory())):
+            root = Path(directory).resolve()
+            if path.is_relative_to(root):
+                relative = path.relative_to(root)
+                break
+        else:
+            directory = Path(tempfile.mkdtemp(prefix="skintokens_preview_", dir=folder_paths.get_temp_directory()))
+            preview_path = directory / path.name
+            shutil.copy2(path, preview_path)
+            kind = "temp"
+            relative = preview_path.relative_to(Path(folder_paths.get_temp_directory()).resolve())
+
+        url = "/view?" + urllib.parse.urlencode({"filename": relative.name, "type": kind,
+                                                "subfolder": relative.parent.as_posix() if relative.parent != Path(".") else ""})
+        return {"ui": {"skintokens_mesh": [url]}, "result": (str(path), mesh)}
 
 # =======================================================================
 # REGISTRATION

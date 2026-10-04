@@ -1,5 +1,8 @@
 import importlib.util
 import io
+import json
+import struct
+import urllib.parse
 import os
 import sys
 import tempfile
@@ -37,6 +40,54 @@ class DirectMeshTests(unittest.TestCase):
     def tearDown(self):
         self.temp_patch.stop()
         self.directory.cleanup()
+
+    def test_rigged_file_output_and_previewer_preserve_data(self):
+        # Rig channels must survive the connection without a trimesh conversion.
+        document = {"asset": {"version": "2.0"}, "nodes": [{"name": "Root"}],
+                    "skins": [{"joints": [0]}], "animations": [{"name": "Walk", "channels": [], "samplers": []}]}
+        body = json.dumps(document).encode()
+        body += b" " * (-len(body) % 4)
+        original = struct.pack("<III", 0x46546c67, 2, 20 + len(body)) + struct.pack("<II", len(body), 0x4e4f534a) + body
+        root = Path(self.directory.name)
+        output = root / "output"; output.mkdir()
+        filename = output / "rigged character.glb"; filename.write_bytes(original)
+        generator = nodes.SkinTokensGenerator()
+        with patch.object(generator, "_generate_from_path", return_value=(str(filename),)):
+            path, mesh = generator.generate(None, "source.glb", 5, .95, 1., 2., 10, False, True, False,
+                                           "articulated", ".glb", "Headless (Blender)")
+        self.assertEqual(path, str(filename))
+        self.assertIsInstance(mesh, Types.File3D)
+        self.assertEqual(mesh.get_bytes(), original)
+        with patch.object(nodes.folder_paths, "get_output_directory", return_value=str(output)):
+            result = nodes.SkinTokensRigPreviewer().preview(mesh=mesh, mesh_path="ignored.glb")
+            legacy = nodes.SkinTokensRigPreviewer().preview(mesh_path=path)
+        self.assertIs(result["result"][1], mesh)
+        self.assertEqual(legacy["result"][1].get_bytes(), original)
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(result["ui"]["skintokens_mesh"][0]).query)
+        self.assertEqual(query["filename"], [filename.name])
+        self.assertEqual(query["type"], ["output"])
+
+    def test_memory_backed_preview_persists_until_frontend_fetch(self):
+        mesh = Types.File3D(io.BytesIO(b"rigged file data"), "glb")
+        result = nodes.SkinTokensRigPreviewer().preview(mesh=mesh)
+        self.assertIs(result["result"][1], mesh)
+        self.assertEqual(Path(result["result"][0]).read_bytes(), mesh.get_bytes())
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(result["ui"]["skintokens_mesh"][0]).query)
+        self.assertEqual(query["type"], ["temp"])
+        self.assertTrue(Path(result["result"][0]).is_relative_to(Path(self.directory.name)))
+
+    def test_mesh_connectors_and_legacy_indices(self):
+        generator = nodes.SkinTokensGenerator
+        previewer = nodes.SkinTokensRigPreviewer
+        self.assertEqual(generator.RETURN_TYPES, ("STRING", "FILE_3D"))
+        self.assertEqual(previewer.RETURN_TYPES, ("STRING", "FILE_3D"))
+        optional = previewer.INPUT_TYPES()["optional"]
+        self.assertEqual(list(optional), ["mesh_path", "mesh"])
+        for kind in ("FILE_3D", "FILE_3D_GLB", "FILE_3D_FBX"):
+            self.assertTrue(validate_node_input(kind, optional["mesh"][0], strict=True))
+        self.assertFalse(validate_node_input("MESH", optional["mesh"][0], strict=True))
+        with self.assertRaisesRegex(ValueError, "Connect mesh"):
+            previewer().preview()
 
     def test_connector_validation(self):
         accepted = nodes.SkinTokensGenerator.INPUT_TYPES()["required"]["input_mesh"][0]

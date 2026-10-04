@@ -466,21 +466,18 @@ app.registerExtension({
             LOG(`Node instance created (id=${node.id}).`);
 
             const container = document.createElement("div");
-            container.style.cssText = "width:100%; height:100%; position:relative; overflow:hidden; background:#222;";
+            container.style.cssText = "width:100%; height:100%; min-height:0; position:relative; overflow:hidden; background:#222;";
             node.container = container;
 
             const widget = this.addDOMWidget("view3d", "HTML", container, {
                 serialize: false,
-                hideOnZoom: false
+                hideOnZoom: false,
+                getMinHeight: () => 400,
+                getMaxHeight: () => 400
             });
 
-            // Make the widget responsive to node resizing
-            widget.computeSize = (width) => {
-                const nodeWidth = node.size[0];
-                const nodeHeight = node.size[1];
-                // Subtract space for the node header and any potential input pins
-                return [width, Math.max(100, nodeHeight - 40)];
-            };
+            // Widget height must not depend on the node's total height.
+            widget.computeSize = (width) => [width, 400];
 
             node.setSize([400, 440]);
 
@@ -520,10 +517,10 @@ app.registerExtension({
                 camera.position.set(0, 1.5, 3);
 
                 const renderer = new THREE.WebGLRenderer({ antialias: true });
-                renderer.setSize(width, height);
+                renderer.setSize(width, height, false);
                 renderer.outputEncoding = THREE.sRGBEncoding; // Fix dark textures
                 container.appendChild(renderer.domElement);
-                renderer.domElement.style.cursor = 'grab';
+                renderer.domElement.style.cssText = "position:absolute; inset:0; width:100%; height:100%; display:block; cursor:grab;";
 
                 const grid = new THREE.GridHelper(50000, 50, 0x444444, 0x222222);
                 scene.add(grid);
@@ -558,10 +555,12 @@ app.registerExtension({
                 LOG("Render loop started.");
 
                 new ResizeObserver(() => {
-                    if (!container.clientWidth) return;
-                    camera.aspect = container.clientWidth / container.clientHeight;
+                    const width = container.clientWidth;
+                    const height = container.clientHeight;
+                    if (!width || !height) return;
+                    camera.aspect = width / height;
                     camera.updateProjectionMatrix();
-                    renderer.setSize(container.clientWidth, container.clientHeight);
+                    renderer.setSize(width, height, false);
                 }).observe(container);
             };
 
