@@ -9,25 +9,14 @@ import numpy as np
 import random
 import torch
 import torch.nn.functional as F
+from ..device import model_autocast, packed_attention, transformer_attention
 
 from src.rig_package.info.asset import Asset
 
 from .spec import ModelSpec, ModelInput, VaeInput
 from .skin_vae.autoencoders import SkinFSQCVAEModel
 
-try:
-    from flash_attn_interface import flash_attn_func # type: ignore
-except ImportError:
-    try:
-        from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func
-    except ImportError:
-        def flash_attn_func(q, k, v):
-            output = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2))
-            return output.transpose(1, 2).contiguous(), None
-    else:
-        def flash_attn_func(*args, **kwargs):
-            res = _flash_attn_func(*args, **kwargs)
-            return res, None
+flash_attn_func = packed_attention
 
 class Perceiver(nn.Module):
     def __init__(self, channels, out_tokens, num_heads=8):
@@ -142,7 +131,7 @@ class SkinVAEModel(ModelSpec):
             uniform_skin=uniform_skin,
         )
     
-    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
+    @model_autocast
     def training_step(self, batch: Dict) -> Dict:
         raise NotImplementedError()
     
@@ -177,7 +166,7 @@ class SkinVAEModel(ModelSpec):
     def forward(self, batch: Dict) -> Dict:
         return self.training_step(batch=batch)
 
-    @torch.autocast('cuda', dtype=torch.bfloat16)
+    @model_autocast
     def predict_step(self, batch: Dict) -> Dict:
         vertices: Tensor = batch['vertices'].float() # (B, N, 3)
         num_bones: List[int] = batch['num_bones']

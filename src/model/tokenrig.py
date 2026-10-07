@@ -10,6 +10,7 @@ import math
 import numpy as np
 import torch
 import torch.nn.functional as F
+from ..device import model_autocast, packed_attention, transformer_attention
 
 LLM_LOCAL_DIR = Path("models/Qwen3-0.6B")
 
@@ -100,7 +101,7 @@ class TokenRig(ModelSpec):
         llm_config.torch_dtype = torch.bfloat16
         llm_config.pre_norm = True
         self.llm_config = llm_config
-        attention = "flash_attention_2" if is_flash_attn_2_available() else "sdpa"
+        attention = transformer_attention()
         self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation=attention).to(torch.bfloat16)
         
         self.output_proj = nn.Sequential(
@@ -142,7 +143,7 @@ class TokenRig(ModelSpec):
         rate = (self.global_step-start_steps) / (end_steps-start_steps)
         return min(max((1.0-math.cos(math.pi * rate))/2, 0), 1)
 
-    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
+    @model_autocast
     def training_step(self, batch: Dict) -> Dict:
         raise NotImplementedError()
     
@@ -186,7 +187,7 @@ class TokenRig(ModelSpec):
             start_tokens_list.append(start_tokens)
         return start_tokens_list
     
-    @torch.autocast(device_type='cuda', dtype=torch.bfloat16)
+    @model_autocast
     def generate(
         self,
         vertices: Tensor,

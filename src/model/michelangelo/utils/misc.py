@@ -120,7 +120,9 @@ def get_free_space(path):
     return free_space
 
 def get_device_type():
-    return torch.cuda.get_device_name(0)
+    from src.device import resolve_device
+    device = resolve_device()
+    return getattr(torch, device.type).get_device_name(device) if device.type != "cpu" else "CPU"
 
 def get_hostname():
     import socket
@@ -211,13 +213,19 @@ class TimeRecorder:
     def start(self, name: str) -> None:
         if not self.enabled:
             return
-        torch.cuda.synchronize()
+        from src.device import resolve_device
+        device = resolve_device()
+        if device.type in ("cuda", "xpu"):
+            getattr(torch, device.type).synchronize(device)
         self.items[name] = time.time()
 
     def end(self, name: str, accumulate: bool = False) -> float:
         if not self.enabled or name not in self.items:
             return
-        torch.cuda.synchronize()
+        from src.device import resolve_device
+        device = resolve_device()
+        if device.type in ("cuda", "xpu"):
+            getattr(torch, device.type).synchronize(device)
         start_time = self.items.pop(name)
         delta = time.time() - start_time
         if accumulate:
