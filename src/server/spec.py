@@ -73,9 +73,12 @@ def bytes_to_object(b, map_location=None):
 def get_model(
     ckpt_path: str,
     hf_path: Optional[str]=None,
-    device='cuda',
+    device=None,
 ) -> TokenRig:
-    model = TokenRig.load_from_system_checkpoint(checkpoint_path=ckpt_path)
+    from ..device import loading_device, resolve_device
+    device = resolve_device(device)
+    with loading_device(device):
+        model = TokenRig.load_from_system_checkpoint(checkpoint_path=ckpt_path)
     if hf_path is not None:
         from transformers import AutoModel
         from transformers.utils import is_flash_attn_2_available
@@ -83,7 +86,7 @@ def get_model(
             hf_path,
             local_files_only=True,
             trust_remote_code=False,
-            _attn_implementation="flash_attention_2" if is_flash_attn_2_available() else "sdpa",
+            _attn_implementation="flash_attention_2" if device.type == "cuda" and is_flash_attn_2_available() else "sdpa",
             torch_dtype=torch.bfloat16 if 'torch' in sys.modules else None,
         )
         model.transformer.model.load_state_dict(a.state_dict())

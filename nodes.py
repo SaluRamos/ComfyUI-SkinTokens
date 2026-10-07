@@ -535,7 +535,8 @@ class SkinTokensModelLoader:
                 raise RuntimeError(f"Failed to download model {model_name} from HuggingFace: {e}")
         
         print(f"[SkinTokens] Loading model: {model_path}")
-        model = get_model(model_path, hf_path=None)
+        from comfy import model_management
+        model = get_model(model_path, hf_path=None, device=model_management.get_torch_device())
         assert model.tokenizer_config is not None
         tokenizer = get_tokenizer(**model.tokenizer_config)
         transform = Transform.parse(**model.transform_config["predict_transform"])
@@ -692,9 +693,9 @@ class SkinTokensGenerator:
         dataloader = module.predict_dataloader()["articulation"]
 
         for i, batch in enumerate(dataloader):
-            # Move to CUDA if it is a tensor
+            # Keep inputs on the model device (CUDA, Intel XPU or CPU).
             batch = {
-                k: v.to("cuda") if isinstance(v, Tensor) else v
+                k: v.to(next(_model.parameters()).device) if isinstance(v, Tensor) else v
                 for k, v in batch.items()
             }
 

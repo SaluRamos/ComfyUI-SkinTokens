@@ -500,7 +500,7 @@ def run_rig(
 
     for i, batch in tqdm(enumerate(dataloader), total=len(dataloader)):
         batch = {
-            k: v.to("cuda") if isinstance(v, Tensor) else v
+            k: v.to(next(model.parameters()).device) if isinstance(v, Tensor) else v
             for k, v in batch.items()
         }
 

@@ -168,7 +168,7 @@ class FSQ(Module):
 
         # whether to force quantization step to be full precision or not
         force_f32 = self.force_quantization_f32
-        quantization_context = partial(autocast, 'cuda', enabled = False) if force_f32 else nullcontext
+        quantization_context = partial(autocast, z.device.type, enabled = False) if force_f32 else nullcontext
 
         with quantization_context():
             orig_dtype = z.dtype
